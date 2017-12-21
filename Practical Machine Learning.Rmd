@@ -1,0 +1,219 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Peter Makai"
+date: "21 december 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Practical Machine learning
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+Tha aim of this analysis is to predict how well subjects did the excersise, using the variables in the dataset. For this a brute force machine-learing approach will be applied. 
+
+## Packages
+
+```{r }
+
+library(knitr)
+library(caret)
+library(rpart)
+library(randomForest)
+library(e1071)
+
+
+
+```
+
+## Reading in data
+
+
+```{r , echo=TRUE}
+
+
+UrlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+UrlTest  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(UrlTrain))
+testing  <- read.csv(url(UrlTest))
+
+
+
+```
+
+## Checking the data 
+
+```{r, echo=TRUE, results="hide"}
+
+str(training)
+str(testing)
+
+```
+
+Viewing the data shows (not shown), that there are 160 variables and above 19 thousand observations in the training dataset, while the testing dataset contains 20 observations. The data has many missing values, which were removed in the following section. 
+
+## Cleaning data
+
+```{r}
+
+# remove ID and time-series variables
+
+training <- training[, 7:160]
+testing  <- testing[, 7:160]
+
+remove<-testing[,colSums(is.na(testing)) > 0]
+
+rem<-names(remove)
+
+training <- training[, !(colnames(training) %in% rem)]
+testing  <- testing[, !(colnames(testing) %in% rem)]
+
+training<-training[!duplicated(training),]
+testing<-testing[!duplicated(testing),]
+```
+
+ID variables and non-numeric time-series variables were removed. The testing dataset only has one observation per person, and thus time-series values are maningless in this analysis. 
+
+
+## Partitioning into training and validation sets
+
+
+```{r}
+
+inTrain  <- createDataPartition(training$classe, p=0.7, list=FALSE)
+TrainSet <- training[inTrain, ]
+TestSet  <- training[-inTrain, ]
+
+
+```
+
+The test set is set aside for validation, and another test-set was created within the training dataset. As the "classe" variable cannot be found in the testing dataset, this newly created test set is needed to determine out of sample errors. 
+
+
+## Predictions
+
+
+```{r, echo=TRUE, results="hide"}
+
+set.seed(2000)
+
+
+random_forest<-train(classe~., data=TrainSet, method="rf",
+                     trControl=trainControl(method="cv", number=3))
+
+random_forest$finalModel
+
+linear_disc<-train(classe~., data=TrainSet, method="lda",
+                     trControl=trainControl(method="cv", number=3))
+
+# does not work in caret
+SVMfit <- svm(classe~.,data=TrainSet)
+
+pred1<-predict(random_forest,TestSet)
+pred2<-predict(linear_disc,TestSet)
+pred3<-predict(SVMfit,TestSet, type="class")
+
+
+
+```
+
+Three models were used in order to predict the categorical variables: a random forest analysis, a linear discriminant analysis and a support-vector machine classifier. Predictions were made using the test sets. 
+
+
+## Combined model
+
+```{r, results="hide"}
+
+predDF<-data.frame(pred1, pred2, pred3,classe=TestSet$classe)
+
+# gam does not work well, and has warnings: factor outcome
+
+combi<-train(classe~.,method='gbm', data=predDF)
+
+predcombi<-predict(combi, predDF)
+
+
+```
+
+Since it's possible that combining different classifiers provides better results, the three previous classifiers were combined using generalized boosting models, and a prediction was made.  
+
+
+## Out of sample errors
+
+```{r}
+
+# out of sample
+
+confusionMat1 <- confusionMatrix(pred1, TestSet$classe)
+confusionMat1
+
+acc1<-as.numeric(confusionMat1$overall['Accuracy'])
+
+#out of sample error:
+
+1-acc1
+
+
+
+confusionMat2 <- confusionMatrix(pred2, TestSet$classe)
+confusionMat2
+
+acc2<-as.numeric(confusionMat2$overall['Accuracy'])
+
+#out of sample error:
+
+1-acc2
+
+
+confusionMat3 <- confusionMatrix(pred3, TestSet$classe)
+confusionMat3
+
+acc3<-as.numeric(confusionMat3$overall['Accuracy'])
+
+#out of sample error:
+
+1-acc3
+
+
+confusionMat_fin <- confusionMatrix(predcombi, TestSet$classe)
+confusionMat_fin
+
+
+acc4<-as.numeric(confusionMat_fin$overall['Accuracy'])
+
+#out of sample error:
+
+1-acc4
+
+```
+
+Above the out of sample errors were computed for all three independent and the combined model. Out of sample errors can be computed by 1-Accuracy. The random forest has outperformed all other models, and the combined model using gradient boosting machine was no improvement. The out of sample error of the best-performing model was 0.24%. 
+
+
+## Predicting the test set
+
+
+```{r}
+
+
+randomtest <- predict(random_forest, testing)
+results <- data.frame(
+  problem_id=testing$problem_id,
+  predicted=randomtest
+)
+print(results)
+
+```
+
+The results on the test set are whown above. The rendom forest model was used to predict based on the testing dataset. 
+
+
+## Conclusion
+
+This brute force method, where variable selection has not been performed has achieved considerable accuracy with the random forest. Signifficantly better results are increasingly difficult. Going further would require a thorough correlation analysis aided by expert knowledge in creating better variables. However, an accuracy of 99.8% is in many applications more than enough. 
